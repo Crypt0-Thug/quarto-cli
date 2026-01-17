@@ -1,0 +1,59 @@
+# Upstream Sync Workflow
+# Syncs fork with quarto-dev/quarto-cli on schedule and manual trigger
+name: Sync Upstream
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to sync'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add Upstream Remote
+        run: |
+          git remote add upstream https://github.com/quarto-dev/quarto-cli.git || true
+          git fetch upstream
+
+      - name: Sync Branch
+        run: |
+          BRANCH=${{ github.event.inputs.branch || 'main' }}
+          git checkout $BRANCH
+          git merge upstream/$BRANCH --no-edit --allow-unrelated-histories || {
+            echo "Merge conflict detected. Creating PR instead."
+            git merge --abort
+            exit 1
+          }
+          git push origin $BRANCH
+
+      - name: Create PR on Conflict
+        if: failure()
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "Upstream sync conflict - manual resolution required"
+          body: |
+            Automatic upstream sync failed due to conflicts.
+            Please resolve manually.
+          branch: upstream-sync-conflict
+          base: main
